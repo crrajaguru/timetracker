@@ -1,0 +1,14 @@
+{
+    "manifest_version": 3,
+    "name": "Attendance Time Calculator",
+    "version": "1.0",
+    "description": "Calculates total attendance time when hovering over a row.",
+    "permissions": ["activeTab"],
+    "content_scripts": [
+      {
+        "matches": ["<all_urls>"],
+        "js": ["content.js"]
+      }
+    ]
+  }
+  
