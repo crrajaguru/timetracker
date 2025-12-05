@@ -1,3 +1,20 @@
+let dailyWorkMinutes = 480; // Default 8 hours
+
+// Load settings
+if (typeof chrome !== "undefined" && chrome.storage) {
+    chrome.storage.sync.get(['workHours'], (result) => {
+        if (result.workHours) {
+            dailyWorkMinutes = result.workHours * 60;
+        }
+    });
+
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+        if (changes.workHours) {
+            dailyWorkMinutes = changes.workHours.newValue * 60;
+        }
+    });
+}
+
 function parseTime(timeStr) {
     if (!timeStr) return null;
     let [time, period] = timeStr.trim().split(" ");
@@ -9,14 +26,29 @@ function parseTime(timeStr) {
     return new Date().setHours(hours, minutes, 0, 0);
 }
 
-function calculateTime(trElement) {
-    let timeRows = trElement.querySelectorAll("tbody tr");
+function calculateTime(dayRow) {
+    // dayRow is the Outer TR containing the day's info
+    // We need to find the nested table with class 'table-condensed' inside this row
+    let nestedTable = dayRow.querySelector(".table-condensed");
+
+    // If no nested table found (shouldn't happen based on structure, but for safety)
+    // or if it has no rows
+    let defaultRemaining = `${Math.floor(dailyWorkMinutes / 60)}h ${dailyWorkMinutes % 60}m`;
+    if (!nestedTable) return { totalTime: "0h 0m", remainingTime: defaultRemaining };
+
+    let timeRows = nestedTable.querySelectorAll("tbody tr");
     let totalMilliseconds = 0;
     let currentTime = new Date().getTime();
 
     timeRows.forEach(row => {
+        // Ensure row has enough cells
+        if (row.cells.length < 2) return;
+
         let timeInText = row.cells[0]?.innerText.trim();
         let timeOutText = row.cells[1]?.innerText.trim();
+
+        // Skip rows without valid time format (e.g. headers or empty rows)
+        if (!timeInText || !timeInText.includes(":")) return;
 
         let timeIn = parseTime(timeInText);
         let timeOut = parseTime(timeOutText) || currentTime;
@@ -30,7 +62,7 @@ function calculateTime(trElement) {
     let hours = Math.floor(totalMinutes / 60);
     let minutes = totalMinutes % 60;
 
-    let remainingMinutes = Math.max(0, 480 - totalMinutes); // 8 hours = 480 minutes
+    let remainingMinutes = Math.max(0, dailyWorkMinutes - totalMinutes);
     let remainingHours = Math.floor(remainingMinutes / 60);
     let remainingMins = remainingMinutes % 60;
 
@@ -65,8 +97,21 @@ popup.innerHTML = `
 document.body.appendChild(popup);
 
 document.addEventListener("mouseover", (event) => {
-    let tr = event.target.closest("tr");
+    let target = event.target;
+    let tr = target.closest("tr");
+
     if (tr) {
+        // We need to find the "Day Row" (Outer TR).
+        // If we are inside the nested table (table-condensed), the closest TR is an inner row.
+        // We need to go up to the nested table, and then find the TR containing that table.
+        if (tr.closest(".table-condensed")) {
+            tr = tr.closest(".table-condensed").closest("tr");
+        }
+
+        // If we still don't have a TR, or if this TR doesn't look like a Day Row (check for nested table presence?)
+        // The Day Row should contain a .table-condensed
+        if (!tr || !tr.querySelector(".table-condensed")) return;
+
         let times = calculateTime(tr);
         let name = document.querySelector(".account-name")?.innerText.trim();
         let imgSrc = document.querySelector(".user-avatar img")?.src;
@@ -85,7 +130,18 @@ document.addEventListener("mouseover", (event) => {
 });
 
 document.addEventListener("mouseout", (event) => {
-    if (!event.target.closest("tr")) {
+    let tr = event.target.closest("tr");
+    if (tr) {
+        // Resolve to Day Row for consistency
+        if (tr.closest(".table-condensed")) {
+            tr = tr.closest(".table-condensed").closest("tr");
+        }
+
+        // Check if the mouse moved to an element inside the same Day Row
+        let relatedTarget = event.relatedTarget;
+        if (relatedTarget && tr && tr.contains(relatedTarget)) {
+            return;
+        }
         popup.style.display = "none";
     }
 });
