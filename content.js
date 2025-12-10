@@ -16,9 +16,12 @@ if (typeof chrome !== "undefined" && chrome.storage) {
 }
 
 function parseTime(timeStr) {
-    if (!timeStr) return null;
+    if (!timeStr || !timeStr.includes(":")) return null;
     let [time, period] = timeStr.trim().split(" ");
+    if (!time || !period) return null;
     let [hours, minutes] = time.split(":").map(Number);
+
+    if (isNaN(hours) || isNaN(minutes)) return null;
 
     if (period === "PM" && hours !== 12) hours += 12;
     if (period === "AM" && hours === 12) hours = 0;
@@ -40,23 +43,48 @@ function calculateTime(dayRow) {
     let totalMilliseconds = 0;
     let currentTime = new Date().getTime();
 
-    timeRows.forEach(row => {
+    for (let i = 0; i < timeRows.length; i++) {
+        let row = timeRows[i];
         // Ensure row has enough cells
-        if (row.cells.length < 2) return;
+        if (row.cells.length < 2) continue;
 
         let timeInText = row.cells[0]?.innerText.trim();
         let timeOutText = row.cells[1]?.innerText.trim();
 
         // Skip rows without valid time format (e.g. headers or empty rows)
-        if (!timeInText || !timeInText.includes(":")) return;
+        if (!timeInText || !timeInText.includes(":")) continue;
 
         let timeIn = parseTime(timeInText);
-        let timeOut = parseTime(timeOutText) || currentTime;
+        // If parseTime returned null/NaN (though current parseTime implementation returns timestamp with NaN if invalid input, let's assume valid based on includes(':'))
+        // Better safety:
+        if (isNaN(timeIn)) continue;
 
-        if (timeIn) {
-            totalMilliseconds += (timeOut - timeIn);
+        let timeOut = parseTime(timeOutText);
+
+        // HANDLE DUPLICATE/GHOST PUNCHES:
+        // If TimeOut is missing (still active?), check if the NEXT row is a valid punch-in at the same/later time.
+        // This handles the case where the machine logs a phantom "In" that gets stuck open, but a real record follows immediately.
+        if (!timeOut && i + 1 < timeRows.length) {
+            let nextRow = timeRows[i + 1];
+            let nextTimeInText = nextRow.cells[0]?.innerText.trim();
+            if (nextTimeInText && nextTimeInText.includes(":")) {
+                let nextTimeIn = parseTime(nextTimeInText);
+                // If the next row starts at the same time or later, assume this current row is a duplicate/error and skip it.
+                if (!isNaN(nextTimeIn) && nextTimeIn >= timeIn) {
+                    console.log("Skipping duplicate/broken row:", timeInText);
+                    continue;
+                }
+            }
         }
-    });
+
+        // If timeOut is missing, use current time
+        let effectiveTimeOut = timeOut || currentTime;
+
+        // Prevent negative time calculation (if entry is in future relative to machine/system time)
+        if (effectiveTimeOut > timeIn) {
+            totalMilliseconds += (effectiveTimeOut - timeIn);
+        }
+    }
 
     let totalMinutes = Math.floor(totalMilliseconds / 60000);
     let hours = Math.floor(totalMinutes / 60);
